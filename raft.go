@@ -17,13 +17,15 @@ package raft
 //   in the same server.
 //
 
-import "sync"
-import "sync/atomic"
-import "../labrpc"
+// import "sort"
 import (
+	"bytes"
+	"sync"
+	"sync/atomic"
+	"../labrpc"
+	"../labgob"
 	"math/rand"
 	"time"
-	"sort"
 	"fmt"
 )
 
@@ -127,12 +129,13 @@ func (rf *Raft) GetState() (int, bool) {
 func (rf *Raft) persist() {
 	// Your code here (2C).
 	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// data := w.Bytes()
-	// rf.persister.SaveRaftState(data)
+	 w := new(bytes.Buffer)
+	 e := labgob.NewEncoder(w)
+	 e.Encode(rf.currentTerm)
+	 e.Encode(rf.votedFor)
+	 e.Encode(rf.log)
+	 data := w.Bytes()
+	 rf.persister.SaveRaftState(data)
 }
 
 
@@ -145,17 +148,20 @@ func (rf *Raft) readPersist(data []byte) {
 	}
 	// Your code here (2C).
 	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
+	 r := bytes.NewBuffer(data)
+	 d := labgob.NewDecoder(r)
+	 var currentTerm int
+	 var votedFor int
+	 var log []Entry
+	 if d.Decode(&currentTerm) != nil ||
+	    d.Decode(&votedFor) != nil ||
+	    d.Decode(&log) != nil {
+
+	 } else {
+	   rf.currentTerm = currentTerm
+	   rf.votedFor = votedFor
+	   rf.log = log
+	 }
 }
 
 type AppendEntriesArgs struct {
@@ -167,9 +173,19 @@ type AppendEntriesArgs struct {
 	LeaderCommit int
 }
 
+// fast append entry protocol
+/*
+	If a follower does not have prevLogIndex in its log, it should return with conflictIndex = len(log) and conflictTerm = None.
+	If a follower does have prevLogIndex in its log, but the term does not match, it should return conflictTerm = log[prevLogIndex].Term, and then search its log for the first index whose entry has term equal to conflictTerm.
+	Upon receiving a conflict response, the leader should first search its log for conflictTerm. If it finds an entry in its log with that term, it should set nextIndex to be the one beyond the index of the last entry in that term in its log.
+	If it does not find an entry with that term, it should set nextIndex = conflictIndex.
+*/
+
 type AppendEntriesReply struct {
 	Term int
 	Success bool
+	ConflictIndex int
+	ConflictTerm int
 }
 
 //
@@ -249,8 +265,10 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	DPrintf("Server %d: got RequestVote from server %d, return true.\n", 
 		rf.me, args.CandidateId)
+	rf.votedFor = args.CandidateId
 	reply.Term = rf.currentTerm
 	reply.VoteGranted = true
+	rf.persist()
 }
 
 //
@@ -321,14 +339,26 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 				rf.me, args.LeaderId)
 			reply.Term = rf.currentTerm
 			reply.Success = false
+			// fast append entry protocol
+			reply.ConflictTerm = 0
+			reply.ConflictIndex = len(rf.log)
 			return
 		}
 
-		if rf.log[args.PrevLogIndex].Term != args.Term {
+		if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
 			DPrintf("Server %d: got AppendEntries from leader %d, return false 3.\n", 
 				rf.me, args.LeaderId)
 			reply.Term = rf.currentTerm
 			reply.Success = false
+			// fast append entry protocol
+			reply.ConflictTerm = rf.log[args.PrevLogIndex].Term
+			for termIndex := args.PrevLogIndex; termIndex > 0; termIndex-- {
+				if rf.log[termIndex].Term == reply.ConflictTerm {
+					reply.ConflictIndex = termIndex
+				} else {
+					break
+				}
+			}
 			return		
 		}
 	}
@@ -397,6 +427,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	index = len(rf.log) - 1
     rf.matchIndex[rf.me] = index
     rf.nextIndex[rf.me] = index + 1
+    rf.persist()
 
 	return index, term, isLeader
 }
@@ -522,6 +553,7 @@ func (rf *Raft) applyLoop() {
 	      rf.applyCh <- msg
 	      DPrintf("applyLoop, msg:%+v\n", msg)
 	    }
+	    rf.persist()
 	    rf.mu.Unlock()
     }
   }
@@ -562,12 +594,14 @@ func (rf *Raft) startElection() {
 	    } else {
 	    	rf.mu.Lock()
 			defer rf.mu.Unlock()
-			if reply.Term > rf.currentTerm {
+			if rf.role != RoleCandidate {
+				// nothing
+			} else if term != rf.currentTerm {
+				// nothing
+			} else if reply.Term > rf.currentTerm {
 				DPrintf("Leader %d: turn back to follower due to existing higher term %d from server %d\n", rf.me, reply.Term, id)
 				rf.convertToFollower(reply.Term, -1)
 			} else if reply.Term < rf.currentTerm {
-				// nothing
-			} else if rf.role != RoleCandidate {
 				// nothing
 			} else if reply.VoteGranted {
 				rf.totalVotes++
@@ -604,8 +638,9 @@ func (rf *Raft) startAppendEntries() {
 	    prevLogTerm := rf.log[prevLogIndex].Term
 	    currNextIndex := rf.nextIndex[id]
 	    entries := rf.log[currNextIndex:]
+	    term := rf.currentTerm
 	    args := AppendEntriesArgs{
-	    	Term: rf.currentTerm,
+	    	Term: term,
 	    	LeaderId: rf.me,
 	    	PrevLogTerm: prevLogTerm,
 	    	PrevLogIndex: prevLogIndex,
@@ -623,6 +658,8 @@ func (rf *Raft) startAppendEntries() {
 			defer rf.mu.Unlock()
 			if rf.role != RoleLeader {
 				// nothing
+			} else if term != rf.currentTerm {
+				// nothing
 			} else if reply.Term > rf.currentTerm {
 				DPrintf("Leader %d: turn back to follower due to existing higher term %d from server %d\n", rf.me, reply.Term, id)
 				rf.convertToFollower(reply.Term, -1)
@@ -635,6 +672,26 @@ func (rf *Raft) startAppendEntries() {
 				} else {
 					rf.matchIndex[id] = newNextIndex - 1
 					rf.nextIndex[id] = newNextIndex;
+					myLogIndex := len(rf.log) - 1
+					rf.matchIndex[rf.me] = myLogIndex
+
+		            for biggerCommitIndex := myLogIndex; biggerCommitIndex > rf.commitIndex; biggerCommitIndex-- {
+		                indexCount := 0
+		                for _, matchIndex := range rf.matchIndex {
+		                    if matchIndex >= biggerCommitIndex {
+		                        indexCount++
+		                    }
+		                }
+
+		                if indexCount > len(rf.peers)/2 && 
+		                	rf.log[biggerCommitIndex].Term == rf.currentTerm{
+		                    rf.commitIndex = biggerCommitIndex
+		                    break
+		                }
+		            }
+
+		            /*
+		            // 这方案有个不足是只试探了一个index值，没有继续往前探测
 					copyMatchIndex := make([]int, len(rf.peers))
 					copy(copyMatchIndex, rf.matchIndex)
 					copyMatchIndex[rf.me] = len(rf.log) - 1
@@ -644,9 +701,42 @@ func (rf *Raft) startAppendEntries() {
 						rf.log[newCommitIndex].Term == rf.currentTerm {
 						rf.commitIndex = newCommitIndex
 					}
+					*/
 				}
 			} else if rf.nextIndex[id] > 1 {
-				rf.nextIndex[id] --;
+				solution := 2
+				if solution==1 {
+					// TestFigure8Unreliable2C对快速AppendEntry有要求
+					// 一次后退10格加速匹配, 是最简单的解决这个问题的方案
+					// 也可以用下面else中论文里的方案
+					rf.nextIndex[id] -= 10;
+					if rf.nextIndex[id] < 1 {
+						rf.nextIndex[id] = 1
+					}
+				} else {
+					// fast append entry protocol
+					// fmt.Printf("startAppendEntries me(%d)->(%d) nextid(%d),req:%+v, res:%+v, not success.\n", 
+					//		rf.me, id, rf.nextIndex[id], args, reply)
+					conflictIndex := reply.ConflictIndex
+					conflictTerm := reply.ConflictTerm
+					if conflictTerm > 0 {
+						newNextIndex := prevLogIndex
+						for i:= newNextIndex-1; i > 0; i-- {
+							if rf.log[i].Term != conflictTerm {
+								newNextIndex = i
+							} else {
+								break
+							}
+						}
+						if newNextIndex > 0 {
+							rf.nextIndex[id] = newNextIndex
+						} else {
+							rf.nextIndex[id] = conflictIndex
+						}
+					} else {
+						rf.nextIndex[id] = conflictIndex
+					}
+				}
 			}
 	    }
 	    // [send rpc] -> [wait] ->[handle the reply]
