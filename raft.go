@@ -385,6 +385,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.me, args.LeaderId)
 	reply.Term = rf.currentTerm
 	reply.Success = true
+	rf.persist()
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
@@ -553,7 +554,7 @@ func (rf *Raft) applyLoop() {
 	      rf.applyCh <- msg
 	      DPrintf("applyLoop, msg:%+v\n", msg)
 	    }
-	    rf.persist()
+	    //rf.persist()
 	    rf.mu.Unlock()
     }
   }
