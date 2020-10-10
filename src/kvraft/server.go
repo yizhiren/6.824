@@ -23,6 +23,11 @@ type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+	Method string
+	Key string
+	Value string
+	RequestId int64
+	ClientId int64
 }
 
 type KVServer struct {
@@ -35,15 +40,208 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
+	Kvmap map[string]string
+	Duplicate map[int64]map[string]int64 // [clientId]([key]requestId)
+	RequestHandlers map[int]chan raft.ApplyMsg
+}
+
+func (kv *KVServer) registerIndexHandler(index int) chan raft.ApplyMsg {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	awaitChan := make(chan raft.ApplyMsg, 1)
+	kv.RequestHandlers[index] = awaitChan
+
+	return awaitChan
+}
+
+// to be update
+func (kv *KVServer) await(index int, term int, op Op) (success bool) {
+	awaitChan := kv.registerIndexHandler(index)
+
+	for {
+		select {
+		case message := <-awaitChan:
+			if kv.RaftBecomeFollower(&message) {
+				return false
+			}
+			if (message.CommandValid == true) &&
+				(index == message.CommandIndex) {
+			 	return (term == message.CommandTerm)
+			}
+			// continue
+		}
+	}
+}
+
+func (kv *KVServer) GetKeyValue(key string) (string, bool) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	val, ok := kv.Kvmap[key]
+	return val,ok
+}
+
+func (kv *KVServer) GetDuplicate(clientId int64, key string) (int64, bool) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
+	clientRequest, haveClient := kv.Duplicate[clientId]
+	if !haveClient {
+		return 0,false
+	}
+	val, ok := clientRequest[key]
+	return val, ok
+}
+
+func (kv *KVServer) SetDuplicateNolock(clientId int64, key string, requestId int64)  {
+	_, haveClient := kv.Duplicate[clientId]
+	if !haveClient {
+		kv.Duplicate[clientId] = make(map[string]int64)
+	}
+	kv.Duplicate[clientId][key] = requestId
 }
 
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
+
+	_, isLeader := kv.rf.GetState()
+	if !isLeader {
+		reply.Err = ErrNotLeader
+		return
+	}
+
+	ops := Op {
+		Method: "Get",
+		Key: args.Key,
+		RequestId: args.RequestId,
+		ClientId: args.ClientId,
+	}
+
+	index, term, isLeader := kv.rf.Start(ops)
+
+	if !isLeader {
+		reply.Err = ErrNotLeader
+		return
+	}
+
+	success := kv.await(index, term, ops)
+	if !success {
+		reply.Err = ErrNotLeader
+		return
+	} else {	
+		val, ok := kv.GetKeyValue(args.Key)
+		if ok {
+			reply.Value = val
+			reply.Err = OK
+		} else {
+			reply.Err = ErrNoKey
+		}
+		return
+	}
+
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
+	_, isLeader := kv.rf.GetState()
+	if !isLeader {
+		reply.Err = ErrNotLeader
+		return
+	}
+
+	ops := Op {
+		Method: args.Op,
+		Key: args.Key,
+		Value: args.Value,
+		RequestId: args.RequestId,
+		ClientId: args.ClientId,
+	}
+
+	dup, ok := kv.GetDuplicate(ops.ClientId, ops.Key)
+	if ok && (dup == ops.RequestId) {
+		reply.Err = OK
+		return
+	}
+
+	index, term, isLeader := kv.rf.Start(ops)
+
+	if !isLeader {
+		reply.Err = ErrNotLeader
+		return
+	}
+
+	success := kv.await(index, term, ops)
+	if !success {
+		reply.Err = ErrNotLeader
+		return
+	} else {	
+		reply.Err = OK
+		return
+	}
+}
+
+func (kv *KVServer) OnApplyEntry(m *raft.ApplyMsg) {
+	ops := m.Command.(Op)
+	dup, ok := kv.GetDuplicate(ops.ClientId, ops.Key)
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	if !ok || (dup != ops.RequestId) {
+		// save the client id and its serial number
+		switch ops.Method {
+		case "Get":
+			// nothing
+		case "Put":
+			kv.Kvmap[ops.Key] = ops.Value
+			kv.SetDuplicateNolock(ops.ClientId, ops.Key, ops.RequestId)
+		case "Append":
+			kv.Kvmap[ops.Key] += ops.Value
+			kv.SetDuplicateNolock(ops.ClientId, ops.Key, ops.RequestId)
+		}
+	}
+
+	ch, ok := kv.RequestHandlers[m.CommandIndex]
+	if ok {
+		delete(kv.RequestHandlers, m.CommandIndex)
+		ch <- *m
+	}
+}
+
+func (kv *KVServer) RaftBecomeFollower(m *raft.ApplyMsg) bool {
+	return (m.CommandValid == false) && 
+		(m.Type == raft.MsgTypeRole) &&
+		(m.Role == raft.RoleFollower)
+}
+
+func (kv *KVServer) OnRoleNotify(m *raft.ApplyMsg) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	if kv.RaftBecomeFollower(m) {
+	    for index, ch := range kv.RequestHandlers {
+			delete(kv.RequestHandlers, index)
+			ch <- *m
+	    }	
+	}
+
+}
+
+func (kv *KVServer) receivingApplyMsg() {
+	for {
+		select {
+		case m := <-kv.applyCh:
+				if m.CommandValid {
+					DPrintf("periodCheckApplyMsg receive entry message. %+v.", m)
+					kv.OnApplyEntry(&m)
+				} else if(m.Type == raft.MsgTypeKill) {
+					DPrintf("periodCheckApplyMsg receive kill message. %+v.", m)
+					return 
+				} else if(m.Type == raft.MsgTypeRole) {
+					DPrintf("periodCheckApplyMsg receive role message. %+v.", m)
+					kv.OnRoleNotify(&m)
+					
+				}
+		}
+
+	}
 }
 
 //
@@ -94,8 +292,12 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+	kv.Kvmap = make(map[string]string)
+	kv.Duplicate = make(map[int64]map[string]int64)
+	kv.RequestHandlers = make(map[int]chan raft.ApplyMsg)
 
 	// You may need initialization code here.
 
+	go kv.receivingApplyMsg()
 	return kv
 }

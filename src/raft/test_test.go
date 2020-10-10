@@ -350,21 +350,15 @@ func TestRejoin2B(t *testing.T) {
 
 	// new leader commits, also for index=2
 	cfg.one(103, 2, true)
-
 	// new leader network failure
 	leader2 := cfg.checkOneLeader()
 	cfg.disconnect(leader2)
-
 	// old leader connected again
 	cfg.connect(leader1)
-
 	cfg.one(104, 2, true)
-
 	// all together now
 	cfg.connect(leader2)
-
 	cfg.one(105, servers, true)
-
 	cfg.end()
 }
 
@@ -778,6 +772,7 @@ func TestFigure8Unreliable2C(t *testing.T) {
 
 	nup := servers
 	for iters := 0; iters < 1000; iters++ {
+		//fmt.Printf("TestFigure8Unreliable2C, iter=%d\n", iters)
 		if iters == 200 {
 			cfg.setlongreordering(true)
 		}
@@ -810,13 +805,14 @@ func TestFigure8Unreliable2C(t *testing.T) {
 			}
 		}
 	}
-
+	//fmt.Printf("TestFigure8Unreliable2C, leave loop.\n")
+	//Debug = 1
 	for i := 0; i < servers; i++ {
 		if cfg.connected[i] == false {
 			cfg.connect(i)
 		}
 	}
-
+	//fmt.Printf("TestFigure8Unreliable2C, all connected.\n")
 	cfg.one(rand.Int()%10000, servers, true)
 
 	cfg.end()

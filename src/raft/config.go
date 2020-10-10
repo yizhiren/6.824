@@ -444,18 +444,20 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 			if rf != nil {
 				index1, _, ok := rf.Start(cmd)
 				if ok {
+					//fmt.Printf("one.leader is %d, cmd=%+v\n", starts, cmd)
 					index = index1
 					break
 				}
 			}
 		}
-
+		//fmt.Printf("cmd=%+v, index=%d\n", cmd, index)
 		if index != -1 {
 			// somebody claimed to be the leader and to have
 			// submitted our command; wait a while for agreement.
 			t1 := time.Now()
 			for time.Since(t1).Seconds() < 2 {
 				nd, cmd1 := cfg.nCommitted(index)
+				//fmt.Printf("nCommitted(%d), %d, %+v\n", index, nd, cmd1)
 				if nd > 0 && nd >= expectedServers {
 					// committed
 					if cmd1 == cmd {
