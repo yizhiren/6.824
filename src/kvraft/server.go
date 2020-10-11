@@ -7,6 +7,8 @@ import (
 	"../raft"
 	"sync"
 	"sync/atomic"
+	"bytes"
+	//"fmt"
 )
 
 const Debug = 0
@@ -38,6 +40,8 @@ type KVServer struct {
 	dead    int32 // set by Kill()
 
 	maxraftstate int // snapshot if log grows this big
+	lastSnapshotIndex int
+	snapshoting bool
 
 	// Your definitions here.
 	Kvmap map[string]string
@@ -224,6 +228,44 @@ func (kv *KVServer) OnRoleNotify(m *raft.ApplyMsg) {
 
 }
 
+
+func (kv *KVServer) OnSnapshot(m *raft.ApplyMsg) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	kv.loadSnapshot(m.Snapshot)
+}
+
+func (kv *KVServer) DoSnapshot(lastIncludedIndex int) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	if lastIncludedIndex <= kv.lastSnapshotIndex {
+		return
+	}
+	kv.lastSnapshotIndex = lastIncludedIndex
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(kv.Kvmap)
+	e.Encode(kv.lastSnapshotIndex)
+	e.Encode(kv.Duplicate)
+	snapshot := w.Bytes()
+
+	kv.snapshoting = true
+	go func() {
+		kv.rf.PersistStateAndSnapshot(kv.lastSnapshotIndex, snapshot)
+		kv.snapshoting = false
+	}()
+}
+
+func (kv *KVServer) SnapshotIfNeeded(index int) {
+	if kv.maxraftstate > 0 && !kv.snapshoting {
+		var threshold = int(0.95 * float64(kv.maxraftstate))
+		if kv.rf.GetRaftStateSize() > threshold {
+			kv.DoSnapshot(index)
+		}
+	}
+
+}
+
 func (kv *KVServer) receivingApplyMsg() {
 	for {
 		select {
@@ -231,6 +273,7 @@ func (kv *KVServer) receivingApplyMsg() {
 				if m.CommandValid {
 					DPrintf("periodCheckApplyMsg receive entry message. %+v.", m)
 					kv.OnApplyEntry(&m)
+					kv.SnapshotIfNeeded(m.CommandIndex)
 				} else if(m.Type == raft.MsgTypeKill) {
 					DPrintf("periodCheckApplyMsg receive kill message. %+v.", m)
 					return 
@@ -238,6 +281,9 @@ func (kv *KVServer) receivingApplyMsg() {
 					DPrintf("periodCheckApplyMsg receive role message. %+v.", m)
 					kv.OnRoleNotify(&m)
 					
+				} else if(m.Type == raft.MsgTypeSnapshot) {
+					DPrintf("periodCheckApplyMsg receive snapshot message. %+v.", m)
+					kv.OnSnapshot(&m)
 				}
 		}
 
@@ -263,6 +309,24 @@ func (kv *KVServer) Kill() {
 func (kv *KVServer) killed() bool {
 	z := atomic.LoadInt32(&kv.dead)
 	return z == 1
+}
+
+func (kv *KVServer) loadSnapshot(data []byte) {
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+
+	kvmap := make(map[string]string)
+	snapshotIndex := 0
+	duplicate := make(map[int64]map[string]int64)
+
+	d.Decode(&kvmap)
+	d.Decode(&snapshotIndex)
+	d.Decode(&duplicate)
+
+	kv.Kvmap = kvmap
+	kv.lastSnapshotIndex = snapshotIndex
+	kv.Duplicate = duplicate
+	
 }
 
 //
@@ -296,6 +360,13 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.Duplicate = make(map[int64]map[string]int64)
 	kv.RequestHandlers = make(map[int]chan raft.ApplyMsg)
 
+	if kv.maxraftstate > 0 {
+		data := persister.ReadSnapshot()
+		if len(data) > 0 {
+			kv.loadSnapshot(data)
+		}
+	}
+	DPrintf("kv server %d start, value=%+v\n", kv.me, kv)
 	// You may need initialization code here.
 
 	go kv.receivingApplyMsg()

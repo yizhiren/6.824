@@ -225,6 +225,7 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 			time.Sleep(1 * time.Second)
 			go partitioner(t, cfg, ch_partitioner, &done_partitioner)
 		}
+
 		time.Sleep(5 * time.Second)
 
 		atomic.StoreInt32(&done_clients, 1)     // tell clients to quit
@@ -243,14 +244,16 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 		}
 
 		if crash {
-			// log.Printf("shutdown servers\n")
+
 			for i := 0; i < nservers; i++ {
+
 				cfg.ShutdownServer(i)
 			}
+
 			// Wait for a while for servers to shutdown, since
 			// shutdown isn't a real crash and isn't instantaneous
 			time.Sleep(electionTimeout)
-			// log.Printf("restart servers\n")
+
 			// crash and re-start all
 			for i := 0; i < nservers; i++ {
 				cfg.StartServer(i)
@@ -260,7 +263,7 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 
 		// log.Printf("wait for clients\n")
 		for i := 0; i < nclients; i++ {
-			// log.Printf("read from clients %d\n", i)
+
 			j := <-clnts[i]
 			// if j < 10 {
 			// 	log.Printf("Warning: client %d managed to perform only %d put operations in 1 sec?\n", i, j)
@@ -279,6 +282,7 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 				t.Fatalf("logs were not trimmed (%v > 8*%v)", sz, maxraftstate)
 			}
 		}
+
 		if maxraftstate < 0 {
 			// Check that snapshots are not used
 			ssz := cfg.SnapshotSize()
@@ -286,9 +290,12 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 				t.Fatalf("snapshot too large (%v), should not be used when maxraftstate = %d", ssz, maxraftstate)
 			}
 		}
+
 	}
 
+
 	cfg.end()
+
 }
 
 // similar to GenericTest, but with clients doing random operations (and using a

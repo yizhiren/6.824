@@ -253,7 +253,9 @@ func (cfg *config) DisconnectClient(ck *Clerk, from []int) {
 
 // Shutdown a server by isolating it
 func (cfg *config) ShutdownServer(i int) {
+
 	cfg.mu.Lock()
+
 	defer cfg.mu.Unlock()
 
 	cfg.disconnectUnlocked(i, cfg.All())
@@ -274,13 +276,21 @@ func (cfg *config) ShutdownServer(i int) {
 		cfg.saved[i] = cfg.saved[i].Copy()
 	}
 
+
 	kv := cfg.kvservers[i]
+
 	if kv != nil {
+
 		cfg.mu.Unlock()
+
 		kv.Kill()
+
 		cfg.mu.Lock()
+
 		cfg.kvservers[i] = nil
+
 	}
+
 }
 
 // If restart servers, first call ShutdownServer
