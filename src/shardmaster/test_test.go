@@ -9,6 +9,7 @@ import (
 import "fmt"
 
 func check(t *testing.T, groups []int, ck *Clerk) {
+	//fmt.Printf("[check] groups:%+v\n", groups)
 	c := ck.Query(-1)
 	if len(c.Groups) != len(groups) {
 		t.Fatalf("wanted %v groups, got %v", len(groups), len(c.Groups))

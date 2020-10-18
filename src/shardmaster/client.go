@@ -12,6 +12,9 @@ import "math/big"
 type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// Your data here.
+
+	requestId int64
+	clientId int64
 }
 
 func nrand() int64 {
@@ -25,12 +28,25 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
 	// Your code here.
+
+	ck.requestId = nrand()
+	ck.clientId = nrand()
 	return ck
+}
+
+func (ck *Clerk) UpdateRequestId() {
+	newRequestId := nrand()
+	for ck.requestId == newRequestId {
+		newRequestId = nrand()
+	}
+	ck.requestId = newRequestId
 }
 
 func (ck *Clerk) Query(num int) Config {
 	args := &QueryArgs{}
 	// Your code here.
+	args.ClientId = ck.clientId
+	args.RequestId = ck.requestId
 	args.Num = num
 	for {
 		// try each known server.
@@ -38,6 +54,7 @@ func (ck *Clerk) Query(num int) Config {
 			var reply QueryReply
 			ok := srv.Call("ShardMaster.Query", args, &reply)
 			if ok && reply.WrongLeader == false {
+				ck.UpdateRequestId()
 				return reply.Config
 			}
 		}
@@ -48,14 +65,17 @@ func (ck *Clerk) Query(num int) Config {
 func (ck *Clerk) Join(servers map[int][]string) {
 	args := &JoinArgs{}
 	// Your code here.
+	args.ClientId = ck.clientId
+	args.RequestId = ck.requestId
 	args.Servers = servers
-
+	DPrintf("clerk.Join, servers:%+v\n", servers)
 	for {
 		// try each known server.
 		for _, srv := range ck.servers {
 			var reply JoinReply
 			ok := srv.Call("ShardMaster.Join", args, &reply)
 			if ok && reply.WrongLeader == false {
+				ck.UpdateRequestId()
 				return
 			}
 		}
@@ -66,6 +86,8 @@ func (ck *Clerk) Join(servers map[int][]string) {
 func (ck *Clerk) Leave(gids []int) {
 	args := &LeaveArgs{}
 	// Your code here.
+	args.ClientId = ck.clientId
+	args.RequestId = ck.requestId
 	args.GIDs = gids
 
 	for {
@@ -74,6 +96,7 @@ func (ck *Clerk) Leave(gids []int) {
 			var reply LeaveReply
 			ok := srv.Call("ShardMaster.Leave", args, &reply)
 			if ok && reply.WrongLeader == false {
+				ck.UpdateRequestId()
 				return
 			}
 		}
@@ -84,6 +107,8 @@ func (ck *Clerk) Leave(gids []int) {
 func (ck *Clerk) Move(shard int, gid int) {
 	args := &MoveArgs{}
 	// Your code here.
+	args.ClientId = ck.clientId
+	args.RequestId = ck.requestId
 	args.Shard = shard
 	args.GID = gid
 
@@ -93,6 +118,7 @@ func (ck *Clerk) Move(shard int, gid int) {
 			var reply MoveReply
 			ok := srv.Call("ShardMaster.Move", args, &reply)
 			if ok && reply.WrongLeader == false {
+				ck.UpdateRequestId()
 				return
 			}
 		}
