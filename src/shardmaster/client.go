@@ -8,6 +8,7 @@ import "../labrpc"
 import "time"
 import "crypto/rand"
 import "math/big"
+//import "fmt"
 
 type Clerk struct {
 	servers []*labrpc.ClientEnd
@@ -54,10 +55,13 @@ func (ck *Clerk) Query(num int) Config {
 			var reply QueryReply
 			ok := srv.Call("ShardMaster.Query", args, &reply)
 			if ok && reply.WrongLeader == false {
+				//fmt.Printf("sm.query.succ,%v,%+v,%+v\n", ok, args, reply)
 				ck.UpdateRequestId()
 				return reply.Config
 			}
+			//fmt.Printf("sm.query.fail,%v,%+v,%+v\n", ok, args, reply)
 		}
+		//fmt.Printf("sm.query.sleep\n")
 		time.Sleep(100 * time.Millisecond)
 	}
 }

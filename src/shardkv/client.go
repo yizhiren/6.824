@@ -13,6 +13,7 @@ import "crypto/rand"
 import "math/big"
 import "../shardmaster"
 import "time"
+//import "fmt"
 
 //
 // which shard is a key in?
@@ -40,6 +41,9 @@ type Clerk struct {
 	config   shardmaster.Config
 	make_end func(string) *labrpc.ClientEnd
 	// You will have to modify this struct.
+
+	clientId int64
+	requestId int64
 }
 
 //
@@ -56,8 +60,20 @@ func MakeClerk(masters []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 	ck.sm = shardmaster.MakeClerk(masters)
 	ck.make_end = make_end
 	// You'll have to add code here.
+
+	ck.clientId = nrand()
+	ck.requestId = nrand()
 	return ck
 }
+
+func (ck *Clerk) UpdateRequestId() {
+	newRequestId := nrand()
+	for ck.requestId == newRequestId {
+		newRequestId = nrand()
+	}
+	ck.requestId = newRequestId
+}
+
 
 //
 // fetch the current value for a key.
@@ -68,6 +84,8 @@ func MakeClerk(masters []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 func (ck *Clerk) Get(key string) string {
 	args := GetArgs{}
 	args.Key = key
+	args.ClientId = ck.clientId
+	args.RequestId = ck.requestId
 
 	for {
 		shard := key2shard(key)
@@ -79,11 +97,15 @@ func (ck *Clerk) Get(key string) string {
 				var reply GetReply
 				ok := srv.Call("ShardKV.Get", &args, &reply)
 				if ok && (reply.Err == OK || reply.Err == ErrNoKey) {
+					ck.UpdateRequestId()
+					//fmt.Printf("get key %s, shard %d, gid %d ok\n", key, shard, gid)
 					return reply.Value
 				}
 				if ok && (reply.Err == ErrWrongGroup) {
+					//fmt.Printf("get key %s, shard %d, gid %d error group\n", key, shard, gid)
 					break
 				}
+				//fmt.Printf("get key %s, shard %d, gid %d err %+v\n", key, shard, gid, reply)
 				// ... not ok, or ErrWrongLeader
 			}
 		}
@@ -104,7 +126,8 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	args.Key = key
 	args.Value = value
 	args.Op = op
-
+	args.ClientId = ck.clientId
+	args.RequestId = ck.requestId
 
 	for {
 		shard := key2shard(key)
@@ -115,6 +138,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 				var reply PutAppendReply
 				ok := srv.Call("ShardKV.PutAppend", &args, &reply)
 				if ok && reply.Err == OK {
+					ck.UpdateRequestId()
 					return
 				}
 				if ok && reply.Err == ErrWrongGroup {

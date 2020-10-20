@@ -7,10 +7,19 @@ import "sync"
 import "../labgob"
 import "log"
 
+//import "fmt"
+
 const Debug = 0
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug > 0 {
+		log.Printf(format, a...)
+	}
+	return
+}
+
+func TPrintf(format string, a ...interface{}) (n int, err error) {
+	if Debug ==-1 {
 		log.Printf(format, a...)
 	}
 	return
@@ -78,18 +87,6 @@ type Op struct {
 	ClientId int64
 }
 
-/*
-func Clone(a, b interface{}) {
-    buff := new(bytes.Buffer)
-    enc := labgob.NewEncoder(buff)
-    dec := labgob.NewDecoder(buff)
-    enc.Encode(a)
-    dec.Decode(b)
-
-    DPrintf("Clone, a=%+v,b=%+v\n", a, b)
-}
-*/
-
 func Clone(a, b *Config)  {
 	b.Num = a.Num
 	for i,gid := range a.Shards {
@@ -102,9 +99,7 @@ func Clone(a, b *Config)  {
 }
 
 
-func (sm *ShardMaster) AppendConfigAfterJoin(args *JoinArgs) Config {
-	sm.Lock()
-	defer sm.Unlock()
+func (sm *ShardMaster) AppendConfigAfterJoinNolock(args *JoinArgs) Config {
 
 	newConfig := Config{}
 	newConfig.Groups = map[int][]string{}
@@ -122,9 +117,7 @@ func (sm *ShardMaster) AppendConfigAfterJoin(args *JoinArgs) Config {
 	return newConfig
 }
 
-func (sm *ShardMaster) AppendConfigAfterLeave(args *LeaveArgs) Config {
-	sm.Lock()
-	defer sm.Unlock()
+func (sm *ShardMaster) AppendConfigAfterLeaveNolock(args *LeaveArgs) Config {
 
 	newConfig := Config{}
 	newConfig.Groups = map[int][]string{}
@@ -142,9 +135,7 @@ func (sm *ShardMaster) AppendConfigAfterLeave(args *LeaveArgs) Config {
 	return newConfig
 }
 
-func (sm *ShardMaster) AppendConfigAfterMove(args *MoveArgs) Config {
-	sm.Lock()
-	defer sm.Unlock()
+func (sm *ShardMaster) AppendConfigAfterMoveNolock(args *MoveArgs) Config {
 
 	newConfig := Config{}
 	newConfig.Groups = map[int][]string{}
@@ -197,8 +188,6 @@ func (sm *ShardMaster) RebalanceNolock(config *Config) {
 
 func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
 	// Your code here.
-	DPrintf("Join request: args:%v\n", args)
-	defer DPrintf("Join response: reply:%v\n", reply)
 	_, isLeader := sm.rf.GetState()
 	if !isLeader {
 		reply.WrongLeader = true
@@ -206,8 +195,14 @@ func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
 	}
 
 	methodName := "Join"
-	newConfig := sm.AppendConfigAfterJoin(args)
+	dup, ok := sm.GetDuplicate(args.ClientId, methodName)
+	if ok && (dup == args.RequestId) {
+		reply.Err = OK
+		return
+	}
 
+	sm.Lock()
+	newConfig := sm.AppendConfigAfterJoinNolock(args)
 	ops := Op {
 		Method: methodName,
 		Config: newConfig,
@@ -215,13 +210,8 @@ func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
 		ClientId: args.ClientId,
 	}
 
-	dup, ok := sm.GetDuplicate(ops.ClientId, ops.Method)
-	if ok && (dup == args.RequestId) {
-		reply.Err = OK
-		return
-	}
-
 	index, term, isLeader := sm.rf.Start(ops)
+	sm.Unlock()
 
 	if !isLeader {
 		reply.WrongLeader = true
@@ -241,8 +231,7 @@ func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
 
 func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
 	// Your code here.
-	DPrintf("Leave request: args:%v\n", args)
-	defer DPrintf("Leave response: reply:%v\n", reply)
+
 	_, isLeader := sm.rf.GetState()
 	if !isLeader {
 		reply.WrongLeader = true
@@ -250,7 +239,14 @@ func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
 	}
 
 	methodName := "Leave"
-	newConfig := sm.AppendConfigAfterLeave(args)
+	dup, ok := sm.GetDuplicate(args.ClientId, methodName)
+	if ok && (dup == args.RequestId) {
+		reply.Err = OK
+		return
+	}
+
+	sm.Lock()
+	newConfig := sm.AppendConfigAfterLeaveNolock(args)
 
 	ops := Op {
 		Method: methodName,
@@ -259,13 +255,8 @@ func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
 		ClientId: args.ClientId,
 	}
 
-	dup, ok := sm.GetDuplicate(ops.ClientId, ops.Method)
-	if ok && (dup == args.RequestId) {
-		reply.Err = OK
-		return
-	}
-
 	index, term, isLeader := sm.rf.Start(ops)
+	sm.Unlock()
 
 	if !isLeader {
 		reply.WrongLeader = true
@@ -285,8 +276,6 @@ func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
 
 func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
 	// Your code here.
-	DPrintf("Move request: args:%v\n", args)
-	defer DPrintf("Move response: reply:%v\n", reply)
 	_, isLeader := sm.rf.GetState()
 	if !isLeader {
 		reply.WrongLeader = true
@@ -294,7 +283,14 @@ func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
 	}
 
 	methodName := "Move"
-	newConfig := sm.AppendConfigAfterMove(args)
+	dup, ok := sm.GetDuplicate(args.ClientId, methodName)
+	if ok && (dup == args.RequestId) {
+		reply.Err = OK
+		return
+	}
+
+	sm.Lock()
+	newConfig := sm.AppendConfigAfterMoveNolock(args)
 
 	ops := Op {
 		Method: methodName,
@@ -303,13 +299,8 @@ func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
 		ClientId: args.ClientId,
 	}
 
-	dup, ok := sm.GetDuplicate(ops.ClientId, ops.Method)
-	if ok && (dup == args.RequestId) {
-		reply.Err = OK
-		return
-	}
-
 	index, term, isLeader := sm.rf.Start(ops)
+	sm.Unlock()
 
 	if !isLeader {
 		reply.WrongLeader = true
@@ -327,9 +318,7 @@ func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
 	}
 }
 
-func (sm *ShardMaster) getConfig(index int) Config {
-	sm.Lock()
-	defer sm.Unlock()
+func (sm *ShardMaster) getConfigNolock(index int) Config {
 
 	var config Config
 	config.Groups = map[int][]string{}
@@ -354,7 +343,9 @@ func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
 	}
 
 	methodName := "Query"
-	theCareConfig := sm.getConfig(args.Num)
+
+	sm.Lock()
+	theCareConfig := sm.getConfigNolock(args.Num)
 
 	ops := Op {
 		Method: methodName,
@@ -363,15 +354,8 @@ func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
 		ClientId: args.ClientId,
 	}
 
-/*
-	dup, ok := sm.GetDuplicate(ops.ClientId, ops.Method)
-	if ok && (dup == args.RequestId) {
-		reply.Err = OK
-		return
-	}
-*/
-
 	index, term, isLeader := sm.rf.Start(ops)
+	sm.Unlock()
 
 	if !isLeader {
 		reply.WrongLeader = true

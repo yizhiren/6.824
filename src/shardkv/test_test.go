@@ -28,9 +28,7 @@ func TestStaticShards(t *testing.T) {
 
 	cfg := make_config(t, 3, false, -1)
 	defer cfg.cleanup()
-
 	ck := cfg.makeClient()
-
 	cfg.join(0)
 	cfg.join(1)
 
@@ -40,7 +38,9 @@ func TestStaticShards(t *testing.T) {
 	for i := 0; i < n; i++ {
 		ka[i] = strconv.Itoa(i) // ensure multiple shards
 		va[i] = randstring(20)
+		//fmt.Printf("TTT5,%v,%v\n", ka[i], va[i])
 		ck.Put(ka[i], va[i])
+		//fmt.Printf("TTT6\n")
 	}
 	for i := 0; i < n; i++ {
 		check(t, ck, ka[i], va[i])
@@ -51,12 +51,13 @@ func TestStaticShards(t *testing.T) {
 	// Get()s don't succeed.
 	cfg.ShutdownGroup(1)
 	cfg.checklogs() // forbid snapshots
-
 	ch := make(chan bool)
 	for xi := 0; xi < n; xi++ {
 		ck1 := cfg.makeClient() // only one call allowed per client
 		go func(i int) {
-			defer func() { ch <- true }()
+			defer func() { 
+				ch <- true 
+			}()
 			check(t, ck1, ka[i], va[i])
 		}(xi)
 	}
@@ -80,8 +81,11 @@ func TestStaticShards(t *testing.T) {
 
 	// bring the crashed shard/group back to life.
 	cfg.StartGroup(1)
+
 	for i := 0; i < n; i++ {
+		//fmt.Printf("TTT16, %v,%v\n", ka[i], va[i])
 		check(t, ck, ka[i], va[i])
+		//fmt.Printf("TTT17\n")
 	}
 
 	fmt.Printf("  ... Passed\n")
@@ -143,13 +147,12 @@ func TestJoinLeave(t *testing.T) {
 func TestSnapshot(t *testing.T) {
 	fmt.Printf("Test: snapshots, join, and leave ...\n")
 
-	cfg := make_config(t, 3, false, 1000)
+	cfg := make_config(t, 3, false, 3000)
 	defer cfg.cleanup()
 
 	ck := cfg.makeClient()
 
 	cfg.join(0)
-
 	n := 30
 	ka := make([]string, n)
 	va := make([]string, n)
@@ -158,10 +161,11 @@ func TestSnapshot(t *testing.T) {
 		va[i] = randstring(20)
 		ck.Put(ka[i], va[i])
 	}
+
 	for i := 0; i < n; i++ {
 		check(t, ck, ka[i], va[i])
 	}
-
+	
 	cfg.join(1)
 	cfg.join(2)
 	cfg.leave(0)
@@ -186,6 +190,7 @@ func TestSnapshot(t *testing.T) {
 	time.Sleep(1 * time.Second)
 
 	for i := 0; i < n; i++ {
+
 		check(t, ck, ka[i], va[i])
 	}
 
@@ -202,6 +207,7 @@ func TestSnapshot(t *testing.T) {
 	cfg.StartGroup(2)
 
 	for i := 0; i < n; i++ {
+
 		check(t, ck, ka[i], va[i])
 	}
 
@@ -312,20 +318,27 @@ func TestConcurrent1(t *testing.T) {
 		va[i] = randstring(5)
 		ck.Put(ka[i], va[i])
 	}
-
+	//fmt.Printf("TestConcurrent1 TT1\n")
 	var done int32
 	ch := make(chan bool)
 
 	ff := func(i int) {
-		defer func() { ch <- true }()
+		defer func() { 
+			//fmt.Printf("TestConcurrent1 TT1, finished %d\n", i)
+			ch <- true 
+		}()
 		ck1 := cfg.makeClient()
 		for atomic.LoadInt32(&done) == 0 {
 			x := randstring(5)
+			//fmt.Printf("TestConcurrent1[%d] TT1.1 %v, %v\n", i, ka[i], x)
 			ck1.Append(ka[i], x)
+			//fmt.Printf("TestConcurrent1[%d] TT1.2 %v, %v\n", i, ka[i], x)
 			va[i] += x
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
+	//fmt.Printf("TestConcurrent1 TT2\n")
+
 
 	for i := 0; i < n; i++ {
 		go ff(i)
@@ -360,14 +373,18 @@ func TestConcurrent1(t *testing.T) {
 	time.Sleep(1 * time.Second)
 
 	atomic.StoreInt32(&done, 1)
+
+	fmt.Printf("TestConcurrent1 TT3\n")
 	for i := 0; i < n; i++ {
+		//fmt.Printf("TestConcurrent1 TT3.%d\n", i)
 		<-ch
 	}
-
+	fmt.Printf("TestConcurrent1 TT4\n")
 	for i := 0; i < n; i++ {
+		//fmt.Printf("TestConcurrent1 TT4.1 %v,%v\n", ka[i], va[i])
 		check(t, ck, ka[i], va[i])
 	}
-
+	//fmt.Printf("TestConcurrent1 TT5\n")
 	fmt.Printf("  ... Passed\n")
 }
 
