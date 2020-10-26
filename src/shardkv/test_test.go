@@ -147,7 +147,7 @@ func TestJoinLeave(t *testing.T) {
 func TestSnapshot(t *testing.T) {
 	fmt.Printf("Test: snapshots, join, and leave ...\n")
 
-	cfg := make_config(t, 3, false, 3000)
+	cfg := make_config(t, 3, false, 1000)
 	defer cfg.cleanup()
 
 	ck := cfg.makeClient()
@@ -374,12 +374,10 @@ func TestConcurrent1(t *testing.T) {
 
 	atomic.StoreInt32(&done, 1)
 
-	fmt.Printf("TestConcurrent1 TT3\n")
 	for i := 0; i < n; i++ {
 		//fmt.Printf("TestConcurrent1 TT3.%d\n", i)
 		<-ch
 	}
-	fmt.Printf("TestConcurrent1 TT4\n")
 	for i := 0; i < n; i++ {
 		//fmt.Printf("TestConcurrent1 TT4.1 %v,%v\n", ka[i], va[i])
 		check(t, ck, ka[i], va[i])
@@ -400,9 +398,9 @@ func TestConcurrent2(t *testing.T) {
 
 	ck := cfg.makeClient()
 
-	cfg.join(1)
-	cfg.join(0)
-	cfg.join(2)
+	cfg.join(1) // 1
+	cfg.join(0) // 1,0
+	cfg.join(2) // 1,0,2
 
 	n := 10
 	ka := make([]string, n)
@@ -431,23 +429,35 @@ func TestConcurrent2(t *testing.T) {
 		go ff(i, ck1)
 	}
 
-	cfg.leave(0)
-	cfg.leave(2)
+	cfg.leave(0)  
+
+	cfg.leave(2)  
+
 	time.Sleep(3000 * time.Millisecond)
-	cfg.join(0)
-	cfg.join(2)
-	cfg.leave(1)
+	cfg.join(0)  
+
+	cfg.join(2)  
+
+	cfg.leave(1) 
+
 	time.Sleep(3000 * time.Millisecond)
-	cfg.join(1)
-	cfg.leave(0)
-	cfg.leave(2)
+	cfg.join(1) 
+
+	cfg.leave(0) 
+
+	cfg.leave(2) 
+
 	time.Sleep(3000 * time.Millisecond)
 
 	cfg.ShutdownGroup(1)
+
 	cfg.ShutdownGroup(2)
+
 	time.Sleep(1000 * time.Millisecond)
 	cfg.StartGroup(1)
+
 	cfg.StartGroup(2)
+
 
 	time.Sleep(2 * time.Second)
 
@@ -457,6 +467,7 @@ func TestConcurrent2(t *testing.T) {
 	}
 
 	for i := 0; i < n; i++ {
+
 		check(t, ck, ka[i], va[i])
 	}
 
@@ -738,6 +749,7 @@ func TestChallenge1Delete(t *testing.T) {
 		for i := 0; i < cfg.n; i++ {
 			raft := cfg.groups[gi].saved[i].RaftStateSize()
 			snap := len(cfg.groups[gi].saved[i].ReadSnapshot())
+			//fmt.Printf("size, %d,%d\n", raft, snap)
 			total += raft + snap
 		}
 	}

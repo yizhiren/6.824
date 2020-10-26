@@ -111,6 +111,14 @@ type Raft struct {
 	cancelToCandidate bool
 	cancelToReCandidate bool
 
+	snapshotToNotify []*InstallSnapshotArgs
+}
+
+func Max(x, y int) int {
+	if x > y {
+		return x
+	}
+	return y
 }
 
 func GenerateElectionTimeout(min, max int) int {
@@ -506,7 +514,6 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	rf.convertToFollower(args.Term, args.LeaderId)
 
 	if args.LastIncludedIndex > rf.lastSnapshotIndex {
-		rf.applyToCommit()
 
 		offsetIncluedIndex := args.LastIncludedIndex - rf.lastSnapshotIndex
 		if offsetIncluedIndex < len(rf.log) &&
@@ -518,16 +525,17 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		}
 		rf.lastSnapshotIndex = args.LastIncludedIndex
 		rf.lastSnapshotTerm = args.LastIncludedTerm
-
-		
-		if rf.lastSnapshotIndex > rf.commitIndex {
-			rf.commitIndex = rf.lastSnapshotIndex
-			rf.notifySnapshot(args.Data)
-		} 
-		rf.lastApplied = rf.lastSnapshotIndex // 可能会重放部分index，为了kv server中数据完整
 		data := rf.getPersistState()
-		//rf.persister.SaveRaftState(data)
 		rf.persister.SaveStateAndSnapshot(data, args.Data)
+		
+		// notify snapshot和apply entry都在同一线程，
+		// 所以可以做到新的lastApplied生效前快照已经被notify上去了
+		if rf.lastSnapshotIndex > rf.lastApplied {
+			rf.snapshotToNotify = append(rf.snapshotToNotify, args)
+			rf.commitIndex = Max(rf.commitIndex, rf.lastSnapshotIndex)
+			rf.lastApplied = rf.lastSnapshotIndex
+		} 
+
 
 	}
 
@@ -605,11 +613,11 @@ func (rf *Raft) killed() bool {
 	return z == 1
 }
 
-func (rf *Raft) notifyRole() {
+func (rf *Raft) notifyRole(role int) {
 	msg := ApplyMsg{}
 	msg.CommandValid = false
 	msg.Type = MsgTypeRole
-	msg.Role = rf.role
+	msg.Role = role
 	rf.applyCh <- msg
 }
 
@@ -635,7 +643,7 @@ func (rf *Raft) convertToFollower(term int, voteFor int) {
 	rf.votedFor = voteFor
 	rf.totalVotes = 0
 	rf.persist()
-	rf.notifyRole()
+	//rf.notifyRole()
 }
 
 func (rf *Raft) convertToCandidate() {
@@ -645,7 +653,7 @@ func (rf *Raft) convertToCandidate() {
 	rf.votedFor = rf.me
 	rf.totalVotes = 1
 	rf.persist()
-	rf.notifyRole()
+	//rf.notifyRole()
 }
 
 func (rf *Raft) convertToLeader() {
@@ -655,7 +663,7 @@ func (rf *Raft) convertToLeader() {
 		rf.nextIndex[i] = len(rf.log) + rf.lastSnapshotIndex
 		rf.matchIndex[i] = 0
 	}
-	rf.notifyRole()
+	//rf.notifyRole()
 }
 
 func (rf *Raft) followLoop() {
@@ -731,16 +739,35 @@ func (rf *Raft) applyToCommit() {
 
 
 func (rf *Raft) applyLoop() {
+  preRole := rf.role
+
   for {
 	if rf.killed() {
 		break
 	}
     time.Sleep(time.Duration(rf.timeoutToApplyLog) * time.Millisecond)
-    if rf.lastApplied < rf.commitIndex {
-	    rf.mu.Lock()
-	    rf.applyToCommit()
-	    rf.mu.Unlock()
+
+    // update role
+    curRole := rf.role
+    if preRole != curRole {
+    	preRole = curRole
+    	rf.notifyRole(curRole)
     }
+
+    rf.mu.Lock()
+    if (len(rf.snapshotToNotify) > 0) {
+	    latestSnapshot := rf.snapshotToNotify[len(rf.snapshotToNotify)-1]
+	    rf.notifySnapshot(latestSnapshot.Data)
+	    rf.lastApplied = latestSnapshot.LastIncludedIndex 
+	    rf.snapshotToNotify = []*InstallSnapshotArgs{}
+    }
+
+    // 必须放到快照通知之后，这样lastApplied才是正确的
+    if rf.lastApplied < rf.commitIndex {
+	    rf.applyToCommit()
+    }
+    rf.mu.Unlock()
+
   }
 }
 
@@ -1032,6 +1059,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.timeoutToReCandidate = rf.timeoutToCandidate
 	rf.timeoutToHeartbeat = 50
 	rf.timeoutToApplyLog = 10
+	rf.snapshotToNotify = []*InstallSnapshotArgs{}
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())

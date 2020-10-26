@@ -233,6 +233,7 @@ func (kv *KVServer) OnSnapshot(m *raft.ApplyMsg) {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
 	kv.loadSnapshot(m.Snapshot)
+	
 }
 
 func (kv *KVServer) DoSnapshot(lastIncludedIndex int) {

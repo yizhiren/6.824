@@ -37,6 +37,8 @@ type ShardMaster struct {
 
 	configs []Config // indexed by config num
 	commitIndex int
+
+	opToStart []*Op  // 把op先放进这里，保留了op的顺序，同时可以尽快释放锁
 }
 
 func (sm *ShardMaster) Lock() {
@@ -96,6 +98,16 @@ func Clone(a, b *Config)  {
 		// 假定了一个group中的机器不变
 		b.Groups[gid] = a.Groups[gid]
 	}
+}
+
+func (sm *ShardMaster) StartOneOpNolock() (int, int, bool) {
+	op := sm.opToStart[0]
+	sm.opToStart = sm.opToStart[1:]
+	return sm.rf.Start(*op)
+}
+
+func (sm *ShardMaster) AppendOpNolock(op *Op) {
+	sm.opToStart = append(sm.opToStart, op)
 }
 
 
@@ -210,8 +222,11 @@ func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
 		ClientId: args.ClientId,
 	}
 
-	index, term, isLeader := sm.rf.Start(ops)
+	sm.AppendOpNolock(&ops)
 	sm.Unlock()
+
+	index, term, isLeader := sm.StartOneOpNolock()
+	
 
 	if !isLeader {
 		reply.WrongLeader = true
@@ -255,8 +270,10 @@ func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
 		ClientId: args.ClientId,
 	}
 
-	index, term, isLeader := sm.rf.Start(ops)
+	sm.AppendOpNolock(&ops)
 	sm.Unlock()
+
+	index, term, isLeader := sm.StartOneOpNolock()
 
 	if !isLeader {
 		reply.WrongLeader = true
@@ -299,8 +316,10 @@ func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
 		ClientId: args.ClientId,
 	}
 
-	index, term, isLeader := sm.rf.Start(ops)
+	sm.AppendOpNolock(&ops)
 	sm.Unlock()
+
+	index, term, isLeader := sm.StartOneOpNolock()
 
 	if !isLeader {
 		reply.WrongLeader = true
@@ -354,8 +373,10 @@ func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
 		ClientId: args.ClientId,
 	}
 
-	index, term, isLeader := sm.rf.Start(ops)
+	sm.AppendOpNolock(&ops)
 	sm.Unlock()
+
+	index, term, isLeader := sm.StartOneOpNolock()
 
 	if !isLeader {
 		reply.WrongLeader = true

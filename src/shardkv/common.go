@@ -13,7 +13,8 @@ const (
 	OK             = "OK"
 	ErrNoKey       = "ErrNoKey"
 	ErrWrongGroup  = "ErrWrongGroup"
-	ErrNotLeader = "ErrNotLeader"
+	ErrNotLeader   = "ErrNotLeader"
+	ErrRetry       = "ErrRetry"
 )
 
 type Err string
