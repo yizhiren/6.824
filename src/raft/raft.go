@@ -49,6 +49,7 @@ const (
 	MsgTypeRole = 1
 	MsgTypeKill = 2
 	MsgTypeSnapshot = 3
+	MsgTypeStartup = 4
 )
 
 //
@@ -95,6 +96,7 @@ type Raft struct {
 	//
 	commitIndex int
 	lastApplied int
+	startupCommitIndex int //启动时候的commitindex，用于判断启动完成
 	//
 	nextIndex []int
 	matchIndex []int
@@ -178,11 +180,13 @@ func (rf *Raft) readPersist(data []byte) {
 	 var log []Entry
 	 var lastSnapshotIndex int
 	 var lastSnapshotTerm int
+	 var commitIndex int
 	 if d.Decode(&currentTerm) != nil ||
 	    d.Decode(&votedFor) != nil ||
 	    d.Decode(&log) != nil ||
 	    d.Decode(&lastSnapshotIndex) != nil ||
-	    d.Decode(&lastSnapshotTerm) != nil {
+	    d.Decode(&lastSnapshotTerm) != nil ||
+	    d.Decode(&commitIndex) != nil {
 
 	 } else {
 	   rf.currentTerm = currentTerm
@@ -191,7 +195,7 @@ func (rf *Raft) readPersist(data []byte) {
 	   rf.lastSnapshotIndex = lastSnapshotIndex
 	   rf.lastSnapshotTerm = lastSnapshotTerm
 	   rf.lastApplied = lastSnapshotIndex
-	   rf.commitIndex = lastSnapshotIndex
+	   rf.commitIndex = commitIndex
 	 }
 }
 
@@ -262,6 +266,7 @@ func (rf *Raft) getPersistState() []byte {
 	 e.Encode(rf.log)
 	 e.Encode(rf.lastSnapshotIndex)
 	 e.Encode(rf.lastSnapshotTerm)
+	 e.Encode(rf.commitIndex)
 	 data := w.Bytes()
 	 return data
 }
@@ -612,6 +617,13 @@ func (rf *Raft) killed() bool {
 	return z == 1
 }
 
+func (rf *Raft) notifyStartup() {
+	msg := ApplyMsg{}
+	msg.CommandValid = false
+	msg.Type = MsgTypeStartup
+	rf.applyCh <- msg
+}
+
 func (rf *Raft) notifyRole(role int) {
 	msg := ApplyMsg{}
 	msg.CommandValid = false
@@ -719,10 +731,19 @@ func (rf *Raft) leaderLoop() {
 	}
 }
 
+func (rf *Raft) CheckAndResetStartupCommitIndex() {
+	if rf.startupCommitIndex >= 0 && rf.lastApplied >= rf.startupCommitIndex {
+		rf.notifyStartup()
+		rf.startupCommitIndex = -1
+    }	
+}
+
 func (rf *Raft) applyToCommit() {
 	if rf.lastApplied < rf.lastSnapshotIndex {
 		rf.lastApplied = rf.lastSnapshotIndex
 	}
+
+
     for rf.lastApplied < rf.commitIndex {
       rf.lastApplied++
       lastAppliedOffsetIndex := rf.lastApplied - rf.lastSnapshotIndex
@@ -733,6 +754,8 @@ func (rf *Raft) applyToCommit() {
       msg.Command = rf.log[lastAppliedOffsetIndex].Command
       rf.applyCh <- msg
       DPrintf("applyEntry, msg:%+v\n", msg)
+
+      rf.CheckAndResetStartupCommitIndex()
     }
 }
 
@@ -761,6 +784,8 @@ func (rf *Raft) applyLoop() {
 	    rf.lastApplied = latestSnapshot.LastIncludedIndex 
 	    rf.snapshotToNotify = []*InstallSnapshotArgs{}
     }
+
+    rf.CheckAndResetStartupCommitIndex()
 
     // 必须放到快照通知之后，这样lastApplied才是正确的
     if rf.lastApplied < rf.commitIndex {
@@ -1065,6 +1090,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
+	rf.startupCommitIndex = rf.commitIndex
 	//
 	go rf.followLoop()
 	go rf.candidateLoop()

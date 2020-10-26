@@ -70,7 +70,7 @@ func (ck *Clerk) Query(num int) Config {
 				return reply.Config
 			}
 			//if !ok {
-				//fmt.Printf("sm.query.NOT OK,%v,%+v,%+v\n", ok, args, reply)
+			//	fmt.Printf("sm.query.NOT OK,%v,%+v,%+v\n", ok, args, reply)
 			//}
 		}
 		if ck.killed() {

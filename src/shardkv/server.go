@@ -83,6 +83,7 @@ type ShardKV struct {
 	MasterShardConfig shardmaster.Config
 
 	shutdown chan struct{}
+	isStartupFinish bool
 }
 
 func (kv *ShardKV) registerIndexHandler(index int) chan raft.ApplyMsg {
@@ -719,6 +720,8 @@ func (kv *ShardKV) receivingApplyMsg() {
 					kv.OnRoleNotify(&m)
 				} else if(m.Type == raft.MsgTypeSnapshot) {
 					kv.OnSnapshot(&m)
+				} else if(m.Type == raft.MsgTypeStartup) {
+					kv.isStartupFinish = true
 				}
 		}
 
@@ -770,6 +773,10 @@ func (kv *ShardKV) refreshShardMasterConfig() {
 		select {
 		case <- time.After(ShardMasterCheckInterval):
 			DPrintf("gid(%d) me(%d), leader(%t) refreshShardMasterConfig.1\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
+			if !kv.isStartupFinish {
+				continue
+			}
+
 			_, isLeader := kv.rf.GetState()
 			if !isLeader {
 				continue
@@ -882,8 +889,6 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	// Use something like this to talk to the shardmaster:
 	// kv.mck = shardmaster.MakeClerk(kv.masters)
 	kv.sm = shardmaster.MakeClerk(kv.masters)
-	kv.applyCh = make(chan raft.ApplyMsg)
-	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	kv.shutdown = make(chan struct{})
 	kv.RequestHandlers = make(map[int]chan raft.ApplyMsg)
@@ -898,6 +903,9 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 			kv.loadSnapshot(data)
 		}
 	}
+
+	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	// You may need initialization code here.
 
