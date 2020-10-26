@@ -98,15 +98,12 @@ func (ck *Clerk) Get(key string) string {
 				ok := srv.Call("ShardKV.Get", &args, &reply)
 				if ok && (reply.Err == OK || reply.Err == ErrNoKey) {
 					ck.UpdateRequestId()
-					//fmt.Printf("get key %s, shard %d, gid %d ok\n", key, shard, gid)
 					return reply.Value
 				}
 				if ok && (reply.Err == ErrWrongGroup) {
-					//fmt.Printf("get key %s, shard %d, gid %d error group\n", key, shard, gid)
 					break
 				}
-				//fmt.Printf("get key %s, shard %d, gid %d err %+v\n", key, shard, gid, reply)
-				// ... not ok, or ErrWrongLeader
+
 			}
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -130,6 +127,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	args.RequestId = ck.requestId
 
 	for {
+		
 		shard := key2shard(key)
 		gid := ck.config.Shards[shard]
 		if servers, ok := ck.config.Groups[gid]; ok {

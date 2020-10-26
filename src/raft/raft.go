@@ -605,7 +605,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
 	// Your code here, if desired.
-	rf.notifyKill()
 }
 
 func (rf *Raft) killed() bool {
@@ -743,6 +742,7 @@ func (rf *Raft) applyLoop() {
 
   for {
 	if rf.killed() {
+		rf.notifyKill()
 		break
 	}
     time.Sleep(time.Duration(rf.timeoutToApplyLog) * time.Millisecond)
@@ -766,6 +766,7 @@ func (rf *Raft) applyLoop() {
     if rf.lastApplied < rf.commitIndex {
 	    rf.applyToCommit()
     }
+
     rf.mu.Unlock()
 
   }

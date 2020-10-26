@@ -38,7 +38,6 @@ type ShardMaster struct {
 	configs []Config // indexed by config num
 	commitIndex int
 
-	opToStart []*Op  // 把op先放进这里，保留了op的顺序，同时可以尽快释放锁
 }
 
 func (sm *ShardMaster) Lock() {
@@ -84,7 +83,7 @@ func (sm *ShardMaster) SetDuplicateNolock(clientId int64, method string, request
 type Op struct {
 	// Your data here.
 	Method string
-	Config Config
+	Config []Config
 	RequestId int64
 	ClientId int64
 }
@@ -100,18 +99,7 @@ func Clone(a, b *Config)  {
 	}
 }
 
-func (sm *ShardMaster) StartOneOpNolock() (int, int, bool) {
-	op := sm.opToStart[0]
-	sm.opToStart = sm.opToStart[1:]
-	return sm.rf.Start(*op)
-}
-
-func (sm *ShardMaster) AppendOpNolock(op *Op) {
-	sm.opToStart = append(sm.opToStart, op)
-}
-
-
-func (sm *ShardMaster) AppendConfigAfterJoinNolock(args *JoinArgs) Config {
+func (sm *ShardMaster) AppendConfigAfterJoinNolock(args *JoinArgs) []Config {
 
 	newConfig := Config{}
 	newConfig.Groups = map[int][]string{}
@@ -126,10 +114,10 @@ func (sm *ShardMaster) AppendConfigAfterJoinNolock(args *JoinArgs) Config {
 
 	sm.RebalanceNolock(&newConfig)
 	sm.configs = append(sm.configs, newConfig)
-	return newConfig
+	return sm.configs
 }
 
-func (sm *ShardMaster) AppendConfigAfterLeaveNolock(args *LeaveArgs) Config {
+func (sm *ShardMaster) AppendConfigAfterLeaveNolock(args *LeaveArgs) []Config {
 
 	newConfig := Config{}
 	newConfig.Groups = map[int][]string{}
@@ -144,10 +132,10 @@ func (sm *ShardMaster) AppendConfigAfterLeaveNolock(args *LeaveArgs) Config {
 
 	sm.RebalanceNolock(&newConfig)
 	sm.configs = append(sm.configs, newConfig)
-	return newConfig
+	return sm.configs
 }
 
-func (sm *ShardMaster) AppendConfigAfterMoveNolock(args *MoveArgs) Config {
+func (sm *ShardMaster) AppendConfigAfterMoveNolock(args *MoveArgs) []Config {
 
 	newConfig := Config{}
 	newConfig.Groups = map[int][]string{}
@@ -160,7 +148,7 @@ func (sm *ShardMaster) AppendConfigAfterMoveNolock(args *MoveArgs) Config {
 		lastConfig, newConfig, args)
 
 	sm.configs = append(sm.configs, newConfig)
-	return newConfig
+	return sm.configs
 }
 
 func (sm *ShardMaster) RebalanceNolock(config *Config) {
@@ -222,10 +210,9 @@ func (sm *ShardMaster) Join(args *JoinArgs, reply *JoinReply) {
 		ClientId: args.ClientId,
 	}
 
-	sm.AppendOpNolock(&ops)
 	sm.Unlock()
 
-	index, term, isLeader := sm.StartOneOpNolock()
+	index, term, isLeader := sm.rf.Start(ops)
 	
 
 	if !isLeader {
@@ -270,10 +257,10 @@ func (sm *ShardMaster) Leave(args *LeaveArgs, reply *LeaveReply) {
 		ClientId: args.ClientId,
 	}
 
-	sm.AppendOpNolock(&ops)
 	sm.Unlock()
 
-	index, term, isLeader := sm.StartOneOpNolock()
+	index, term, isLeader := sm.rf.Start(ops)
+	
 
 	if !isLeader {
 		reply.WrongLeader = true
@@ -316,10 +303,10 @@ func (sm *ShardMaster) Move(args *MoveArgs, reply *MoveReply) {
 		ClientId: args.ClientId,
 	}
 
-	sm.AppendOpNolock(&ops)
 	sm.Unlock()
 
-	index, term, isLeader := sm.StartOneOpNolock()
+	index, term, isLeader := sm.rf.Start(ops)
+	
 
 	if !isLeader {
 		reply.WrongLeader = true
@@ -368,15 +355,15 @@ func (sm *ShardMaster) Query(args *QueryArgs, reply *QueryReply) {
 
 	ops := Op {
 		Method: methodName,
-		Config: theCareConfig,
+		Config: nil,
 		RequestId: args.RequestId,
 		ClientId: args.ClientId,
 	}
 
-	sm.AppendOpNolock(&ops)
 	sm.Unlock()
 
-	index, term, isLeader := sm.StartOneOpNolock()
+	index, term, isLeader := sm.rf.Start(ops)
+	
 
 	if !isLeader {
 		reply.WrongLeader = true
@@ -429,6 +416,13 @@ func (sm *ShardMaster) await(index int, term int, op Op) (success bool) {
 	}
 }
 
+func Max(x, y int) int {
+	if x > y {
+		return x
+	}
+	return y
+}
+
 func (sm *ShardMaster) OnApplyEntry(m *raft.ApplyMsg) {
 	ops := m.Command.(Op)
 	dup, ok := sm.GetDuplicate(ops.ClientId, ops.Method)
@@ -438,23 +432,18 @@ func (sm *ShardMaster) OnApplyEntry(m *raft.ApplyMsg) {
 	if !ok || (dup != ops.RequestId) {
 		switch ops.Method {
 		case "Leave":
-			if ops.Config.Num >= len(sm.configs) {
-				sm.configs = append(sm.configs,ops.Config)
-				sm.SetDuplicateNolock(ops.ClientId, ops.Method, ops.RequestId)
-			}
-			sm.commitIndex = ops.Config.Num
+			fallthrough
 		case "Join":
-			if ops.Config.Num >= len(sm.configs) {
-				sm.configs = append(sm.configs,ops.Config)
-				sm.SetDuplicateNolock(ops.ClientId, ops.Method, ops.RequestId)
-			}
-			sm.commitIndex = ops.Config.Num
+			fallthrough
 		case "Move":
-			if ops.Config.Num >= len(sm.configs) {
-				sm.configs = append(sm.configs,ops.Config)
-				sm.SetDuplicateNolock(ops.ClientId, ops.Method, ops.RequestId)
+			if len(ops.Config) > len(sm.configs) {
+				// follower
+				sm.configs = ops.Config
 			}
-			sm.commitIndex = ops.Config.Num
+			sm.commitIndex = Max(sm.commitIndex, len(ops.Config) - 1)
+			sm.SetDuplicateNolock(ops.ClientId, ops.Method, ops.RequestId)
+		case "Query":
+			// nothing
 		}
 	}
 

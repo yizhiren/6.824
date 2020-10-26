@@ -814,6 +814,11 @@ func TestChallenge1Concurrent(t *testing.T) {
 		cfg.ShutdownGroup(0)
 		cfg.ShutdownGroup(1)
 		cfg.ShutdownGroup(2)
+
+		//fmt.Printf("【+++++++++++++++++++++++++++++++++++++++】\n")
+		//time.Sleep(time.Duration(1000*180) * time.Millisecond)
+		//fmt.Printf("【---------------------------------------】\n")
+
 		cfg.StartGroup(0)
 		cfg.StartGroup(1)
 		cfg.StartGroup(2)
@@ -823,6 +828,7 @@ func TestChallenge1Concurrent(t *testing.T) {
 		cfg.leave(2)
 		time.Sleep(time.Duration(rand.Int()%900) * time.Millisecond)
 	}
+	
 
 	time.Sleep(2 * time.Second)
 

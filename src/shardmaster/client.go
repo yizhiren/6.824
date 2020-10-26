@@ -8,6 +8,7 @@ import "../labrpc"
 import "time"
 import "crypto/rand"
 import "math/big"
+import "sync/atomic"
 //import "fmt"
 
 type Clerk struct {
@@ -16,6 +17,7 @@ type Clerk struct {
 
 	requestId int64
 	clientId int64
+	dead      int32
 }
 
 func nrand() int64 {
@@ -33,6 +35,15 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck.requestId = nrand()
 	ck.clientId = nrand()
 	return ck
+}
+
+func (ck *Clerk) Kill() {
+	atomic.StoreInt32(&ck.dead, 1)
+}
+
+func (ck *Clerk) killed() bool {
+	z := atomic.LoadInt32(&ck.dead)
+	return z == 1
 }
 
 func (ck *Clerk) UpdateRequestId() {
@@ -55,13 +66,17 @@ func (ck *Clerk) Query(num int) Config {
 			var reply QueryReply
 			ok := srv.Call("ShardMaster.Query", args, &reply)
 			if ok && reply.WrongLeader == false {
-				//fmt.Printf("sm.query.succ,%v,%+v,%+v\n", ok, args, reply)
 				ck.UpdateRequestId()
 				return reply.Config
 			}
-			//fmt.Printf("sm.query.fail,%v,%+v,%+v\n", ok, args, reply)
+			//if !ok {
+				//fmt.Printf("sm.query.NOT OK,%v,%+v,%+v\n", ok, args, reply)
+			//}
 		}
-		//fmt.Printf("sm.query.sleep\n")
+		if ck.killed() {
+			return Config{}
+		}
+
 		time.Sleep(100 * time.Millisecond)
 	}
 }
@@ -82,6 +97,9 @@ func (ck *Clerk) Join(servers map[int][]string) {
 				ck.UpdateRequestId()
 				return
 			}
+		}
+		if ck.killed() {
+			return
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -104,6 +122,9 @@ func (ck *Clerk) Leave(gids []int) {
 				return
 			}
 		}
+		if ck.killed() {
+			return
+		}
 		time.Sleep(100 * time.Millisecond)
 	}
 }
@@ -125,6 +146,9 @@ func (ck *Clerk) Move(shard int, gid int) {
 				ck.UpdateRequestId()
 				return
 			}
+		}
+		if ck.killed() {
+			return
 		}
 		time.Sleep(100 * time.Millisecond)
 	}

@@ -86,18 +86,14 @@ type ShardKV struct {
 }
 
 func (kv *ShardKV) registerIndexHandler(index int) chan raft.ApplyMsg {
-	//fmt.Printf("gid(%d) me(%d), leader(%t) registerIndexHandler.1\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
-			
+
 	kv.mu.Lock()
-	//fmt.Printf("gid(%d) me(%d), leader(%t) registerIndexHandler.2\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
-	
+
 	defer kv.mu.Unlock()
 
 	awaitChan := make(chan raft.ApplyMsg, 1)
 	kv.RequestHandlers[index] = awaitChan
 
-	//fmt.Printf("gid(%d) me(%d), leader(%t) registerIndexHandler.3\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
-	
 	return awaitChan
 }
 
@@ -129,18 +125,15 @@ func (kv *ShardKV) await(index int, term int, op Op) (success bool) {
 }
 
 func (kv *ShardKV) GetKeyValue(key string) (string, bool) {
-		//fmt.Printf("gid(%d) me(%d), leader(%t) GetKeyValue.1\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
-	
+
 	kv.mu.Lock()
-			//fmt.Printf("gid(%d) me(%d), leader(%t) GetKeyValue.2\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
-	
+
 	defer kv.mu.Unlock()
 	
 	shardNum := key2shard(key)
 	val, ok := kv.Kvmap[shardNum][key]
 
-			//fmt.Printf("gid(%d) me(%d), leader(%t) GetKeyValue.3\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
-	
+
 	return val,ok
 }
 
@@ -179,11 +172,8 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 		return
 	}
 
-			//fmt.Printf("gid(%d) me(%d), leader(%t) Get.1\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
-	
 	kv.mu.Lock()
-			//fmt.Printf("gid(%d) me(%d), leader(%t) Get.2\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
-	
+
 	if !kv.IsOwnThisKeyNolock(args.Key) {
 		kv.mu.Unlock()
 		reply.Err = ErrWrongGroup
@@ -198,8 +188,7 @@ func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
 		ClientId: args.ClientId,
 	}
 
-			//fmt.Printf("gid(%d) me(%d), leader(%t) Get.3\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
-	
+
 	kv.mu.Unlock()
 
 	index, term, isLeader := kv.rf.Start(ops)
@@ -237,14 +226,11 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		return
 	}
 
-	//fmt.Printf("gid(%d) me(%d), leader(%t) PutAppend.1\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
-	
+
 	kv.mu.Lock()
-	//fmt.Printf("gid(%d) me(%d), leader(%t) PutAppend.2\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
-	
+
 	if !kv.IsOwnThisKeyNolock(args.Key) {
-		//fmt.Printf("gid(%d) me(%d), leader(%t) PutAppend.3\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
-		
+
 		kv.mu.Unlock()
 		reply.Err = ErrWrongGroup
 		return
@@ -260,14 +246,12 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 
 	dup, ok := kv.GetDuplicateNolock(ops.ClientId, ops.Key)
 	if ok && (dup == ops.RequestId) {
-		//fmt.Printf("gid(%d) me(%d), leader(%t) PutAppend.3\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
-	
+
 		kv.mu.Unlock()
 		reply.Err = OK
 		return
 	}
-	//fmt.Printf("gid(%d) me(%d), leader(%t) PutAppend.3\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
-	
+
 	kv.mu.Unlock()
 
 	index, term, isLeader := kv.rf.Start(ops)
@@ -291,7 +275,6 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 
 
 func (kv *ShardKV) MigrateShard(args *MigrateShardArgs, reply *MigrateShardReply) {
-	//fmt.Printf("gid(%d) me(%d), leader(%t) MigrateShard args %+v\n",kv.gid, kv.me, kv.rf.IsLeaderNolock(),args)
 
 	_, isLeader := kv.rf.GetState()
 	if !isLeader {
@@ -299,12 +282,7 @@ func (kv *ShardKV) MigrateShard(args *MigrateShardArgs, reply *MigrateShardReply
 		return
 	}
 
-
-		//fmt.Printf("gid(%d) me(%d), leader(%t) MigrateShard.1\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
-	
 	kv.mu.Lock()
-		//fmt.Printf("gid(%d) me(%d), leader(%t) MigrateShard.2\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
-	
 
 	// 这边还没准备好，请求中的版本太新了
 	if kv.AppliedShardConfig.Num + 1 < args.DstConfigVersion {
@@ -340,7 +318,6 @@ func (kv *ShardKV) MigrateShard(args *MigrateShardArgs, reply *MigrateShardReply
 		MigrateShard: *args,
 	}
 
-	//fmt.Printf("gid(%d) me(%d), leader(%t) MigrateShard.3\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
 	kv.mu.Unlock()
 
 	index, term, isLeader := kv.rf.Start(ops)
@@ -404,15 +381,15 @@ func (kv *ShardKV) ExportingShardNolock(shard int, gid int) {
 		Kvmap : kvmap,
 		Duplicate : duplicate,
 	}
-	//fmt.Printf("gid(%d) me(%d), leader(%t) ExportingShardNolock sending args=%+v\n", kv.gid, kv.me, kv.rf.IsLeaderNolock(), args)
+	DPrintf("gid(%d) me(%d), leader(%t) ExportingShardNolock sending args=%+v\n", kv.gid, kv.me, kv.rf.IsLeaderNolock(), args)
 	go func(){
 		for si := 0; si < len(destServers); si++ {
 			srv := kv.make_end(destServers[si])
 			var reply MigrateShardReply
 	
-			//fmt.Printf("gid(%d) me(%d), leader(%t) ExportingShardNolock R1 %v\n",kv.gid, kv.me, kv.rf.IsLeaderNolock(),destServers[si])
+			DPrintf("gid(%d) me(%d), leader(%t) ExportingShardNolock R1 %v\n",kv.gid, kv.me, kv.rf.IsLeaderNolock(),destServers[si])
 			ok := srv.Call("ShardKV.MigrateShard", &args, &reply)
-			//fmt.Printf("gid(%d) me(%d), leader(%t) ExportingShardNolock R2 %v\n",kv.gid, kv.me, kv.rf.IsLeaderNolock(),destServers[si])
+			DPrintf("gid(%d) me(%d), leader(%t) ExportingShardNolock R2 %v\n",kv.gid, kv.me, kv.rf.IsLeaderNolock(),destServers[si])
 			
 			if ok && reply.Err == OK {
 
@@ -429,18 +406,21 @@ func (kv *ShardKV) ExportingShardNolock(shard int, gid int) {
 					Method : METHOD_EXPORT_COMPLETE,
 					MigrateShard: thinArgs,
 				}
-				//fmt.Printf("gid(%d) me(%d), leader(%t) ExportingShardNolock success[+], ops=%+v\n", kv.gid, kv.me, kv.rf.IsLeaderNolock(), ops)
+				DPrintf("gid(%d) me(%d), leader(%t) ExportingShardNolock success[+], ops=%+v\n", kv.gid, kv.me, kv.rf.IsLeaderNolock(), ops)
 				kv.rf.Start(ops)
 				return
 			}
 
-			/*
+			
+			if ok && reply.Err == ErrRetry {
+				break
+			}
+
 			if ok && reply.Err == ErrWrongGroup {
 				break
-			}*/
+			}
 
 		}
-		//fmt.Printf("gid(%d) me(%d), leader(%t) ExportingShardNolock sending fail args=%+v\n", kv.gid, kv.me, kv.rf.IsLeaderNolock(), args)
 
 	}()
 	
@@ -458,9 +438,6 @@ func (kv *ShardKV) IsNotFinishBalance() bool {
 }
 
 func (kv *ShardKV) UpdateAppliedShardConfigIfNeededNolock() {
-
-	//DPrintf("gid(%d) me(%d), leader(%t) Current Status, %+v\n",
-	//	kv.gid, kv.me, kv.rf.IsLeaderNolock(), kv.CurShardStatus)
 
 	if kv.IsNotFinishBalance() {
 		return 
@@ -605,7 +582,9 @@ func (kv *ShardKV) RebalanceShard() {
 		return
 	}
 
-
+	DPrintf("gid(%d) me(%d), leader(%t), cur shard status (%+v).\n",
+			kv.gid, kv.me, kv.rf.IsLeaderNolock(), kv.CurShardStatus)
+		
 	for shard := 0; shard < shardmaster.NShards; shard++ {
 		if kv.CurShardStatus[shard] == EXPORTING {
 			kv.ExportingShardNolock(shard, kv.MasterShardConfig.Shards[shard])
@@ -617,16 +596,12 @@ func (kv *ShardKV) RebalanceShard() {
 func (kv *ShardKV) OnApplyEntry(m *raft.ApplyMsg) {
 	ops := m.Command.(Op)
 
-	//fmt.Printf("gid(%d) me(%d), leader(%t) OnApplyEntry.1,%+v\n",kv.gid, kv.me, kv.rf.IsLeaderNolock(), ops)
-	
+
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
-	//fmt.Printf("gid(%d) me(%d), leader(%t) OnApplyEntry.2\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
-	
+
 	dup, ok := kv.GetDuplicateNolock(ops.ClientId, ops.Key)
 	shardNum := key2shard(ops.Key)
-	
-	//defer fmt.Printf("gid(%d) me(%d), leader(%t) OnApplyEntry.3\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
 	
 
 	if !ok || (dup != ops.RequestId) {
@@ -668,11 +643,9 @@ func (kv *ShardKV) RaftBecomeFollower(m *raft.ApplyMsg) bool {
 
 func (kv *ShardKV) OnRoleNotify(m *raft.ApplyMsg) {
 
-		 //fmt.Printf("gid(%d) me(%d), leader(%t) OnRoleNotify.1\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
-	
+
 	kv.mu.Lock()
-		 //fmt.Printf("gid(%d) me(%d), leader(%t) OnRoleNotify.2\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
-	
+
 	defer kv.mu.Unlock()
 
 	if kv.RaftBecomeFollower(m) {
@@ -681,34 +654,24 @@ func (kv *ShardKV) OnRoleNotify(m *raft.ApplyMsg) {
 			ch <- *m
 	    }	
 	}
-		 //fmt.Printf("gid(%d) me(%d), leader(%t) OnRoleNotify.3\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
-	
 
 }
 
 func (kv *ShardKV) OnSnapshot(m *raft.ApplyMsg) {
-	//fmt.Printf("gid(%d) me(%d), leader(%t) OnSnapshot.1\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
-	
+
 	kv.mu.Lock()
-	//fmt.Printf("gid(%d) me(%d), leader(%t) OnSnapshot.2\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
-	
+
 	defer kv.mu.Unlock()
 
 	kv.loadSnapshot(m.Snapshot)
 
-	//fmt.Printf("gid(%d) me(%d), leader(%t) OnSnapshot.3\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
-	
 }
 
 func (kv *ShardKV) DoSnapshot(lastIncludedIndex int) {
-		//fmt.Printf("gid(%d) me(%d), leader(%t) DoSnapshot.1\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
-	
+
 	kv.mu.Lock()
-		//fmt.Printf("gid(%d) me(%d), leader(%t) DoSnapshot.2\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
-	
+
 	defer kv.mu.Unlock()
-	//defer 	//fmt.Printf("gid(%d) me(%d), leader(%t) DoSnapshot.3\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
-	
 
 	if lastIncludedIndex <= kv.lastSnapshotIndex {
 		return
@@ -723,12 +686,10 @@ func (kv *ShardKV) DoSnapshot(lastIncludedIndex int) {
 	e.Encode(kv.AppliedShardConfig)
 	e.Encode(kv.MasterShardConfig)
 	snapshot := w.Bytes()
-	//fmt.Printf("Snapshot size=%d\n", len(snapshot))
 
 	kv.snapshoting = true
-	//fmt.Printf("gid(%d) me(%d), leader(%t) DoSnapshot.3\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
+	
 	go func() {
-
 		kv.rf.PersistStateAndSnapshot(kv.lastSnapshotIndex, snapshot)
 		kv.snapshoting = false
 	}()
@@ -768,7 +729,8 @@ func (kv *ShardKV) fetchNextConfig() {
 		DPrintf("gid(%d) me(%d), leader(%t) fetchNextConfig.1\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
 			
 		masterShardConfig := kv.sm.Query(-1)
-		DPrintf("gid(%d) me(%d), leader(%t) fetchNextConfig.2\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
+		DPrintf("gid(%d) me(%d), leader(%t) fetchNextConfig.2 sm-master(%+v), this-master(%+v), this-applied(%+v)\n",kv.gid, kv.me, kv.rf.IsLeaderNolock(),
+			masterShardConfig, kv.MasterShardConfig, kv.AppliedShardConfig)
 			
 		kv.mu.Lock()
 		DPrintf("gid(%d) me(%d), leader(%t) fetchNextConfig.3\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
@@ -776,7 +738,7 @@ func (kv *ShardKV) fetchNextConfig() {
 		if masterShardConfig.Num == kv.AppliedShardConfig.Num + 1 {
 			//
 		} else if masterShardConfig.Num > kv.AppliedShardConfig.Num + 1 {
-			DPrintf("gid(%d) me(%d), leader(%t) fetchNextConfig.3.1\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
+			DPrintf("gid(%d) me(%d), leader(%t) fetchNextConfig.3.1, AppliedShardConfig=%d\n",kv.gid, kv.me, kv.rf.IsLeaderNolock(), kv.AppliedShardConfig.Num)
 			
 			masterShardConfig = kv.sm.Query(kv.AppliedShardConfig.Num + 1)
 			DPrintf("gid(%d) me(%d), leader(%t) fetchNextConfig.3.2\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
@@ -788,17 +750,19 @@ func (kv *ShardKV) fetchNextConfig() {
 			return
 		}
 		kv.mu.Unlock()
-		DPrintf("gid(%d) me(%d), leader(%t) fetchNextConfig.5\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
-			
+		
+		if masterShardConfig.Num != kv.AppliedShardConfig.Num + 1 {
+			DPrintf("gid(%d) me(%d), leader(%t) invalid masterShardConfig", kv.gid, kv.me, kv.rf.IsLeaderNolock())
+			return
+		}
+
 		ops := Op {
 			Method: "ApplyConfig",
 			ApplyConfig: masterShardConfig,
 		}
-		DPrintf("gid(%d) me(%d), leader(%t) fetchNextConfig.6\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
-			
+
 		kv.rf.Start(ops)
-		DPrintf("gid(%d) me(%d), leader(%t) fetchNextConfig.7\n",kv.gid, kv.me, kv.rf.IsLeaderNolock())
-			
+		
 }
 
 func (kv *ShardKV) refreshShardMasterConfig() {
@@ -868,6 +832,7 @@ func (kv *ShardKV) loadSnapshot(data []byte) {
 //
 func (kv *ShardKV) Kill() {
 	kv.rf.Kill()
+	kv.sm.Kill()
 	// Your code here, if desired.
 }
 
@@ -934,7 +899,6 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 		}
 	}
 
-	// //fmt.Printf("kvshard server %d start, value=%+v\n\n", kv.me, kv)
 	// You may need initialization code here.
 
 	go kv.receivingApplyMsg()
